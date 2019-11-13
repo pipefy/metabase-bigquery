@@ -16,10 +16,6 @@ driver:
       display-name: Project ID
       placeholder: praxis-beacon-120871
       required: true
-    - name: dataset-id
-      display-name: Dataset ID
-      placeholder: toucanSightings
-      required: false
     - name: client-id
       display-name: Client ID
       placeholder: 1201327674725-y6ferb0feo1hfssr7t40o4aikqll46d4.apps.googleusercontent.com
