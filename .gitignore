@@ -1,0 +1,6 @@
+\#*\#
+.\#*
+.directory
+pom.xml
+/target
+/.nrepl-port
