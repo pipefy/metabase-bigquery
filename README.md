@@ -58,4 +58,4 @@ DEBUG=1 LEIN_SNAPSHOTS_IN_RELEASE=true lein uberjar
 This will build a file called `target/uberjar/bigquery-alt.metabase-driver.jar`; copy this to your Metabase `./plugins` directory.
 
 
-This README was lifted from CrateDB Driver (https://github.com/metabase/crate-driver)[https://github.com/metabase/crate-driver]
+This README was lifted from CrateDB Driver [https://github.com/metabase/crate-driver](https://github.com/metabase/crate-driver)
