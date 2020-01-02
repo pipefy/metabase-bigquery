@@ -1,4 +1,4 @@
-(defproject metabase/bigquery-alt-driver "0.0.1-SNAPSHOT-1.27.0"
+(defproject metabase/bigquery-alt-driver "0.34.0-SNAPSHOT-1.27.0"
   :min-lein-version "2.5.0"
 
   :aliases
@@ -10,7 +10,8 @@
   :profiles
   {:provided
    {:dependencies
-    [[metabase-core "1.0.0-SNAPSHOT"]
+    [[org.clojure/clojure "1.10.1"]
+     [metabase-core "1.0.0-SNAPSHOT"]
      [metabase/google-driver "1.0.0-SNAPSHOT-1.27.0"]]}
 
    :install-for-building-drivers
