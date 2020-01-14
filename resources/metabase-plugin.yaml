@@ -1,6 +1,6 @@
 info:
   name: Metabase BigQuery Driver (Alt)
-  version: 0.0.1-SNAPSHOT-1.27.0
+  version: 0.0.1-SNAPSHOT-1.30.3
   description: Allows Metabase to connect to Google BigQuery databases.
 dependencies:
   - plugin: Metabase Google Drivers Shared Dependencies
