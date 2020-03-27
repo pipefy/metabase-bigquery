@@ -163,8 +163,8 @@
 
 (defmethod temporal-type :default
   [x]
-  (if (contains? (meta x) :bigquery/temporal-type)
-    (:bigquery/temporal-type (meta x))
+  (if (contains? (meta x) :bigquery_alt/temporal-type)
+    (:bigquery_alt/temporal-type (meta x))
     (mbql.u/match-one x
       [:field-id id]               (temporal-type (qp.store/field id))
       [:field-literal _ base-type] (base-type->temporal-type base-type))))
@@ -172,7 +172,7 @@
 (defn- with-temporal-type [x new-type]
   (if (= (temporal-type x) new-type)
     x
-    (vary-meta x assoc :bigquery/temporal-type new-type)))
+    (vary-meta x assoc :bigquery_alt/temporal-type new-type)))
 
 (defmulti ^:private ->temporal-type
   "Coerce `x` to target temporal type."
@@ -318,7 +318,7 @@
                                            :milliseconds :timestamp_millis}]
   (defmethod sql.qp/unix-timestamp->timestamp [:bigquery_alt unix-timestamp-type]
     [_ _ expr]
-    (vary-meta (hsql/call bigquery-fn expr) assoc :bigquery/temporal-type :timestamp)))
+    (vary-meta (hsql/call bigquery-fn expr) assoc :bigquery_alt/temporal-type :timestamp)))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
@@ -415,10 +415,10 @@
 
 ;; See:
 ;;
-;; *  https://cloud.google.com/bigquery/docs/reference/standard-sql/timestamp_functions
-;; *  https://cloud.google.com/bigquery/docs/reference/standard-sql/time_functions
-;; *  https://cloud.google.com/bigquery/docs/reference/standard-sql/date_functions
-;; *  https://cloud.google.com/bigquery/docs/reference/standard-sql/datetime_functions
+;; *  https://cloud.google.com/bigquery_alt/docs/reference/standard-sql/timestamp_functions
+;; *  https://cloud.google.com/bigquery_alt/docs/reference/standard-sql/time_functions
+;; *  https://cloud.google.com/bigquery_alt/docs/reference/standard-sql/date_functions
+;; *  https://cloud.google.com/bigquery_alt/docs/reference/standard-sql/datetime_functions
 
 (defmethod unprepare/unprepare-value [:bigquery_alt LocalTime]
   [_ t]
