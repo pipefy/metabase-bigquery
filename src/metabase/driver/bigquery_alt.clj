@@ -270,7 +270,7 @@
 
 (defmethod driver/supports? [:bigquery_alt :percentile-aggregations] [_ _] false)
 
-(defmethod driver/supports? [:bigquery_alt :expressions] [_ _] false)
+(defmethod driver/supports? [:bigquery_alt :expressions] [_ _] true)
 
 (defmethod driver/supports? [:bigquery_alt :foreign-keys] [_ _] true)
 
