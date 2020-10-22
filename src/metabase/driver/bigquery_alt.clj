@@ -2,31 +2,33 @@
   (:require [clojure
              [set :as set]
              [string :as str]]
-             [clojure.tools.logging :as log]
+            [clojure.tools.logging :as log]
+            [medley.core :as m]
             [metabase
              [driver :as driver]
              [util :as u]]
             [metabase.driver.bigquery_alt
              [common :as bigquery_alt.common]
+             [params :as bigquery_alt.params]
              [query-processor :as bigquery_alt.qp]]
-             [metabase.driver.google :as google]
-            [metabase.driver.sql.util.unprepare :as unprepare]
+            [metabase.driver.google :as google]
             [metabase.query-processor
-             [store :as qp.store]
              [error-type :as error-type]
+             [store :as qp.store]
              [timezone :as qp.timezone]
              [util :as qputil]]
-             [metabase.util.schema :as su]
+            [metabase.util.schema :as su]
             [schema.core :as s])
   (:import com.google.api.client.googleapis.auth.oauth2.GoogleCredential
            com.google.api.client.http.HttpRequestInitializer
            [com.google.api.services.bigquery Bigquery Bigquery$Builder BigqueryScopes]
-            [com.google.api.services.bigquery.model QueryRequest QueryResponse Table TableCell TableFieldSchema TableList TableList$Tables TableReference TableRow TableSchema]
+           [com.google.api.services.bigquery.model QueryRequest QueryResponse Table TableCell TableFieldSchema TableList
             DatasetList DatasetList$Datasets DatasetReference
             TableList$Tables TableReference TableRow TableSchema]
-            java.util.Collections))
+           java.util.Collections))
 
-(driver/register! :bigquery_alt, :parent #{:google :sql})
+(driver/register! :bigquery, :parent #{:google :sql})
+
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                                     Client                                                     |
@@ -49,11 +51,15 @@
 (def ^:private ^{:arglists '([database])} ^Bigquery database->client
   (comp credential->client database->credential))
 
+(defn find-project-id
+  "Select the user specified project-id or the one from the credential, in the case of a service account"
+  [project-id ^GoogleCredential credential]
+  (or project-id
+      (.getServiceAccountProjectId credential)))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                                      Sync                                                      |
 ;;; +----------------------------------------------------------------------------------------------------------------+
-
 (defn- ^TableList list-tables
   "Fetch a page of Tables. By default, fetches the first page; page size is 50. For cases when more than 50 Tables are
   present, you may fetch subsequent pages by specifying the `page-token`; the token for the next page is returned with a
@@ -145,7 +151,6 @@
    :name   table-name
    :fields (set (table-schema->metabase-field-info (.getSchema (get-table database dataset-id table-name))))})
 
-
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                                Running Queries                                                 |
 ;;; +----------------------------------------------------------------------------------------------------------------+
@@ -184,8 +189,11 @@
       ~@body)))
 
 (defn- post-process-native
-  "Parse results of a BigQuery query."
-  [^QueryResponse resp]
+  "Parse results of a BigQuery query. `respond` is the same function passed to
+  `metabase.driver/execute-reducible-query`, and has the signature
+
+    (respond results-metadata rows)"
+  [respond ^QueryResponse resp]
   (with-finished-response [response resp]
     (let [^TableSchema schema
           (.getSchema response)
@@ -194,44 +202,46 @@
           (doall
            (for [^TableFieldSchema field (.getFields schema)
                  :let                    [column-type (.getType field)
+                                          column-mode (.getMode field)
                                           method (get-method bigquery_alt.qp/parse-result-of-type column-type)]]
-             (partial method column-type bigquery_alt.common/*bigquery-timezone-id*)))
+             (partial method column-type column-mode bigquery_alt.common/*bigquery-timezone-id*)))
 
           columns
           (for [column (table-schema->metabase-field-info schema)]
             (-> column
                 (set/rename-keys {:base-type :base_type})
-                (dissoc :database-type)))]
-      {:columns (map (comp u/qualified-name :name) columns)
-       :cols    columns
-       :rows    (for [^TableRow row (.getRows response)]
-                  (for [[^TableCell cell, parser] (partition 2 (interleave (.getF row) parsers))]
-                    (when-let [v (.getV cell)]
-                      ;; There is a weird error where everything that *should* be NULL comes back as an Object.
-                      ;; See https://jira.talendforge.org/browse/TBD-1592
-                      ;; Everything else comes back as a String luckily so we can proceed normally.
-                      (when-not (= (class v) Object)
-                        (parser v)))))})))
+                (dissoc :database-type :database-position)))]
+      (respond
+       {:cols columns}
+       (for [^TableRow row (.getRows response)]
+         (for [[^TableCell cell, parser] (partition 2 (interleave (.getF row) parsers))]
+           (when-let [v (.getV cell)]
+             ;; There is a weird error where everything that *should* be NULL comes back as an Object.
+             ;; See https://jira.talendforge.org/browse/TBD-1592
+             ;; Everything else comes back as a String luckily so we can proceed normally.
+             (when-not (= (class v) Object)
+               (parser v)))))))))
 
 (defn- ^QueryResponse execute-bigquery
-  ([{{:keys [project-id]} :details, :as database} query-string]
-   (execute-bigquery (database->client database) project-id query-string))
+  ([{{:keys [project-id]} :details, :as database} sql parameters]
+   (execute-bigquery (database->client database) (find-project-id project-id (database->credential database)) sql parameters))
 
-  ([^Bigquery client, ^String project-id, ^String query-string]
-   {:pre [client (seq project-id) (seq query-string)]}
+  ([^Bigquery client ^String project-id ^String sql parameters]
+   {:pre [client (seq project-id) (seq sql)]}
    (let [request (doto (QueryRequest.)
                    (.setTimeoutMs (* query-timeout-seconds 1000))
                    ;; if the query contains a `#legacySQL` directive then use legacy SQL instead of standard SQL
-                   (.setUseLegacySql (str/includes? (str/lower-case query-string) "#legacysql"))
-                   (.setQuery query-string))]
+                   (.setUseLegacySql (str/includes? (str/lower-case sql) "#legacysql"))
+                   (.setQuery sql)
+                   (bigquery_alt.params/set-parameters! parameters))]
      (google/execute (.query (.jobs client) project-id request)))))
 
-(defn- process-native* [database query-string]
+(defn- process-native* [respond database sql parameters]
   {:pre [(map? database) (map? (:details database))]}
   ;; automatically retry the query if it times out or otherwise fails. This is on top of the auto-retry added by
   ;; `execute`
   (letfn [(thunk []
-            (post-process-native (execute-bigquery database query-string)))]
+            (post-process-native respond (execute-bigquery database sql parameters)))]
     (try
       (thunk)
       (catch Throwable e
@@ -243,21 +253,21 @@
     (qp.timezone/system-timezone-id)
     "UTC"))
 
-
-(defmethod driver/execute-query :bigquery_alt
-  [driver {{sql :query, params :params, :keys [table-name mbql?]} :native, :as outer-query}]
+(defmethod driver/execute-reducible-query :bigquery_alt
+  ;; TODO - it doesn't actually cancel queries the way we'd expect
+  [driver {{sql :query, :keys [params table-name mbql?]} :native, :as outer-query} _ respond]
   (let [database (qp.store/database)]
     (binding [bigquery_alt.common/*bigquery-timezone-id* (effective-query-timezone-id database)]
       (log/tracef "Running BigQuery query in %s timezone" bigquery_alt.common/*bigquery-timezone-id*)
-      (let [sql (str "-- " (qputil/query->remark outer-query) "\n" (if (seq params)
-                                                                     (unprepare/unprepare driver (cons sql params))
-                                                                     sql))]
-        (process-native* database sql)))))
+      (let [sql (str "-- " (qputil/query->remark :bigquery outer-query) "\n" sql)]
+        (process-native* respond database sql params)))))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                           Other Driver Method Impls                                            |
 ;;; +----------------------------------------------------------------------------------------------------------------+
+
+(defmethod driver/supports? [:bigquery_alt :percentile-aggregations] [_ _] false)
 
 (defmethod driver/supports? [:bigquery_alt :expressions] [_ _] false)
 
