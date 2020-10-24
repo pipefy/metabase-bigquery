@@ -27,7 +27,7 @@
             TableList$Tables TableReference TableRow TableSchema]
            java.util.Collections))
 
-(driver/register! :bigquery, :parent #{:google :sql})
+(driver/register! :bigquery_alt, :parent #{:google :sql})
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
@@ -260,7 +260,7 @@
   (let [database (qp.store/database)]
     (binding [bigquery_alt.common/*bigquery-timezone-id* (effective-query-timezone-id database)]
       (log/tracef "Running BigQuery query in %s timezone" bigquery_alt.common/*bigquery-timezone-id*)
-      (let [sql (str "-- " (qputil/query->remark :bigquery outer-query) "\n" sql)]
+      (let [sql (str "-- " (qputil/query->remark :bigquery_alt outer-query) "\n" sql)]
         (process-native* respond database sql params)))))
 
 

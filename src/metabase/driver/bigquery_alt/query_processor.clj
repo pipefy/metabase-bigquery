@@ -250,7 +250,7 @@
         bigquery-type
         (do
           (log/tracef "Coercing %s (temporal type = %s) to %s" (binding [*print-meta* true] (pr-str x)) (pr-str (temporal-type x)) bigquery-type)
-          (with-temporal-type (hx/cast bigquery-type (sql.qp/->honeysql :bigquery x)) target-type))
+          (with-temporal-type (hx/cast bigquery-type (sql.qp/->honeysql :bigquery_alt x)) target-type))
 
         :else
         x))))
@@ -443,7 +443,7 @@
     (let [hsql-form ((get-method sql.qp/->honeysql [:sql clause-type]) driver clause)]
       (with-temporal-type hsql-form (temporal-type clause)))))
 
-(defmethod sql.qp/->honeysql [:bigquery :relative-datetime]
+(defmethod sql.qp/->honeysql [:bigquery_alt :relative-datetime]
   [driver clause]
   ;; wrap the parent method, converting the result if `clause` itself is typed
   (let [t (temporal-type clause)]
@@ -656,7 +656,7 @@
   [driver t]
   (sql/->prepared-substitution driver (t/offset-date-time t (t/local-time 0) (t/zone-offset 0))))
 
-(defmethod sql.params.substitution/->replacement-snippet-info [:bigquery FieldFilter]
+(defmethod sql.params.substitution/->replacement-snippet-info [:bigquery_alt FieldFilter]
   [driver {:keys [field], :as field-filter}]
   (let [field-temporal-type (temporal-type field)
         parent-method       (get-method sql.params.substitution/->replacement-snippet-info [:sql FieldFilter])
