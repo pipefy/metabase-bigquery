@@ -1,22 +1,19 @@
 (ns metabase.driver.bigquery_alt
-  (:require [clojure
-             [set :as set]
-             [string :as str]]
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
             [clojure.tools.logging :as log]
             [medley.core :as m]
-            [metabase
-             [driver :as driver]
-             [util :as u]]
-            [metabase.driver.bigquery_alt
-             [common :as bigquery_alt.common]
-             [params :as bigquery_alt.params]
-             [query-processor :as bigquery_alt.qp]]
+            [metabase.driver :as driver]
+            [metabase.driver.bigquery_alt.common :as bigquery_alt.common]
+            [metabase.driver.bigquery_alt.params :as bigquery_alt.params]
+            [metabase.driver.bigquery_alt.query-processor :as bigquery_alt.qp]
             [metabase.driver.google :as google]
-            [metabase.query-processor
-             [error-type :as error-type]
-             [store :as qp.store]
-             [timezone :as qp.timezone]
-             [util :as qputil]]
+            [metabase.query-processor.error-type :as error-type]
+            [metabase.query-processor.store :as qp.store]
+            [metabase.query-processor.timezone :as qp.timezone]
+            [metabase.query-processor.util :as qputil]
+            [metabase.util :as u]
+            [metabase.util.i18n :refer [tru]]
             [metabase.util.schema :as su]
             [schema.core :as s])
   (:import com.google.api.client.googleapis.auth.oauth2.GoogleCredential
@@ -33,6 +30,7 @@
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                                     Client                                                     |
 ;;; +----------------------------------------------------------------------------------------------------------------+
+
 
 (defn- ^Bigquery credential->client [^GoogleCredential credential]
   (.build (doto (Bigquery$Builder.
@@ -68,48 +66,46 @@
    (list-tables database nil))
 
   ([{{:keys [project-id]} :details, :as database}, ^String dataset-id]
-   (list-tables (database->client database) project-id dataset-id nil))
+   (let [db-client (database->client database)
+         project-id (find-project-id project-id (database->credential database))]
+     (list-tables (database->client database) project-id dataset-id nil)))
 
   ([{{:keys [project-id]} :details, :as database}, ^String dataset-id, ^String page-token-or-nil]
-   (list-tables (database->client database) project-id dataset-id page-token-or-nil))
+   (list-tables (database->client database) (find-project-id project-id (database->credential database)) dataset-id page-token-or-nil))
 
   ([^Bigquery client, ^String project-id, ^String dataset-id, ^String page-token-or-nil]
    {:pre [client (seq project-id) (seq dataset-id)]}
    (google/execute (u/prog1 (.list (.tables client) project-id dataset-id)
-                     (.setPageToken <> page-token-or-nil)))))
-
+                            (.setPageToken <> page-token-or-nil)))))
 
 (defn- ^DatasetList list-datasets
   ([{{:keys [project-id]} :details, :as database}]
-   {:pre [database (seq project-id)]}
-   (google/execute (u/prog1 (.list (.datasets (database->client database)) project-id)))))
-
+   {:pre [database (find-project-id project-id (database->credential database))]}
+   (google/execute (u/prog1 (.list (.datasets (database->client database)) (find-project-id project-id (database->credential database)))))))
 
 (defmethod driver/describe-database :bigquery_alt
   [_ database]
   ;; first page through all the 50-table pages until we stop getting "next page tokens"
 
-    (let [datasets (loop [datasets [], ^DatasetList dataset-list (list-datasets database)]
-                 (let [datasets (concat datasets (.getDatasets dataset-list))]
-                   (for [^DatasetList$Datasets dataset datasets
-                        :let [^DatasetReference datasetref (.getDatasetReference dataset)]]
-                        (.getDatasetId datasetref))))]
+  (let [datasets (loop [datasets [], ^DatasetList dataset-list (list-datasets database)]
+                   (let [datasets (concat datasets (.getDatasets dataset-list))]
+                     (for [^DatasetList$Datasets dataset datasets
+                           :let [^DatasetReference datasetref (.getDatasetReference dataset)]]
+                       (.getDatasetId datasetref))))]
 
     (let [tables  (loop [tables [], dataset_id (first datasets), dataset_list (next datasets)]
                     (let [tables (concat tables (loop [dataset_tables [], ^TableList table-list (list-tables database dataset_id)]
-                      (let [dataset_tables (concat dataset_tables (.getTables table-list))]
-                        (if-let [next-page-token (.getNextPageToken table-list)]
-                          (recur dataset_tables (list-tables database dataset_id next-page-token))
-                          dataset_tables))))]
-                    (if (and (seq dataset_list))
-                      (recur tables (first dataset_list) (next dataset_list))
-                      tables))
-                )]
+                                                  (let [dataset_tables (concat dataset_tables (.getTables table-list))]
+                                                    (if-let [next-page-token (.getNextPageToken table-list)]
+                                                      (recur dataset_tables (list-tables database dataset_id next-page-token))
+                                                      dataset_tables))))]
+                      (if (and (seq dataset_list))
+                        (recur tables (first dataset_list) (next dataset_list))
+                        tables)))]
     ;; after that convert the results to MB format
-    {:tables (set (for [^TableList$Tables table tables
-                        :let [^TableReference tableref (.getTableReference table)]]
-                    {:schema (.getDatasetId tableref), :name (.getTableId tableref)}))})))
-
+      {:tables (set (for [^TableList$Tables table tables
+                          :let [^TableReference tableref (.getTableReference table)]]
+                      {:schema (.getDatasetId tableref), :name (.getTableId tableref)}))})))
 
 (defmethod driver/can-connect? :bigquery_alt
   [_ details-map]
@@ -119,7 +115,7 @@
 
 (s/defn get-table :- Table
   ([{{:keys [project-id]} :details, :as database} dataset-id table-id]
-   (get-table (database->client database) project-id dataset-id table-id))
+   (get-table (database->client database) (find-project-id project-id (database->credential database)) dataset-id table-id))
 
   ([client :- Bigquery, project-id :- su/NonBlankString, dataset-id :- su/NonBlankString, table-id :- su/NonBlankString]
    (google/execute (.get (.tables client) project-id dataset-id table-id))))
@@ -148,7 +144,7 @@
 
 (defmethod driver/describe-table :bigquery_alt
   [_ database {dataset-id :schema, table-name :name}]
-    {:schema dataset-id
+  {:schema dataset-id
    :name   table-name
    :fields (set (table-schema->metabase-field-info (.getSchema (get-table database dataset-id table-name))))})
 
@@ -209,12 +205,13 @@
       ~@body)))
 
 (defn- ^GetQueryResultsResponse get-query-results
-  [^Bigquery client ^String project-id ^String job-id ^String page-token]
+  [^Bigquery client ^String project-id ^String job-id ^String location ^String page-token]
   (when page-callback
     (page-callback))
   (let [request (doto (.getQueryResults (.jobs client) project-id job-id)
                   (.setMaxResults max-results-per-page)
-                  (.setPageToken page-token))]
+                  (.setPageToken page-token)
+                  (.setLocation location))]
     (google/execute request)))
 
 (defn- ^GetQueryResultsResponse execute-bigquery
@@ -223,18 +220,23 @@
 
   ([^Bigquery client ^String project-id ^String sql parameters]
    {:pre [client (seq project-id) (seq sql)]}
-   (let [request (doto (QueryRequest.)
-                   (.setTimeoutMs (* query-timeout-seconds 1000))
+   (try
+     (let [request (doto (QueryRequest.)
+                     (.setTimeoutMs (* query-timeout-seconds 1000))
                    ;; if the query contains a `#legacySQL` directive then use legacy SQL instead of standard SQL
-                   (.setUseLegacySql (str/includes? (str/lower-case sql) "#legacysql"))
-                   (.setQuery sql)
-                   (bigquery_alt.params/set-parameters! parameters))
-         query-response ^QueryResponse (google/execute (.query (.jobs client) project-id request))
-         job-ref (.getJobReference query-response)
-         job-id (.getJobId job-ref)
-         proj-id (.getProjectId job-ref)]
-     (with-finished-response [_ query-response]
-       (get-query-results client proj-id job-id nil)))))
+                     (.setUseLegacySql (str/includes? (str/lower-case sql) "#legacysql"))
+                     (.setQuery sql)
+                     (bigquery_alt.params/set-parameters! parameters))
+           query-response ^QueryResponse (google/execute (.query (.jobs client) project-id request))
+           job-ref (.getJobReference query-response)
+           location (.getLocation job-ref)
+           job-id (.getJobId job-ref)
+           proj-id (.getProjectId job-ref)]
+       (with-finished-response [_ query-response]
+         (get-query-results client proj-id job-id location nil)))
+     (catch Throwable e
+       (throw (ex-info (tru "Error executing query")
+                       {:type error-type/invalid-query, :sql sql, :parameters parameters}))))))
 
 (defn- post-process-native
   "Parse results of a BigQuery query. `respond` is the same function passed to
@@ -276,8 +278,8 @@
              ;; There is a weird error where everything that *should* be NULL comes back as an Object.
              ;; See https://jira.talendforge.org/browse/TBD-1592
              ;; Everything else comes back as a String luckily so we can proceed normally.
-              (when-not (= (class v) Object)
-                (parser v))))))))))
+               (when-not (= (class v) Object)
+                 (parser v))))))))))
 
 (defn- process-native* [respond database sql parameters]
   {:pre [(map? database) (map? (:details database))]}
@@ -302,13 +304,16 @@
   (let [database (qp.store/database)]
     (binding [bigquery_alt.common/*bigquery-timezone-id* (effective-query-timezone-id database)]
       (log/tracef "Running BigQuery query in %s timezone" bigquery_alt.common/*bigquery-timezone-id*)
-      (let [sql (str "-- " (qputil/query->remark :bigquery_alt outer-query) "\n" sql)]
+      (let [sql (if (get-in database [:details :include-user-id-and-hash] true)
+                  (str "-- " (qputil/query->remark :bigquery outer-query) "\n" sql)
+                  sql)]
         (process-native* respond database sql params)))))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                           Other Driver Method Impls                                            |
 ;;; +----------------------------------------------------------------------------------------------------------------+
+
 
 (defmethod driver/supports? [:bigquery_alt :percentile-aggregations] [_ _] false)
 

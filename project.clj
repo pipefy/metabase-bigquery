@@ -5,7 +5,7 @@
   {"install-for-building-drivers" ["with-profile" "+install-for-building-drivers" "install"]}
 
   :dependencies
-  [[com.google.apis/google-api-services-bigquery "v2-rev20190917-1.30.3"]]
+  [[com.google.apis/google-api-services-bigquery "v2-rev20200523-1.30.9"]]
 
   :profiles
   {:provided
@@ -17,7 +17,6 @@
    :install-for-building-drivers
    {:auto-clean true
     :aot        :all}
-
 
    :uberjar
    {:auto-clean    true
