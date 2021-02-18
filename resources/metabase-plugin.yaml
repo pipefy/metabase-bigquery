@@ -11,6 +11,19 @@ driver:
   parent:
     - google
     - sql
+  connection-properties:
+    - name: "service-account-json"
+      display-name: "Service account JSON file"
+      type: "textFile"
+      required: true
+    - name: use-jvm-timezone
+      display-name: "Use JVM Time Zone"
+      type: boolean
+      default: false
+    - name: "include-user-id-and-hash"
+      display-name: "Include User ID and query hash"
+      type: boolean
+      default: true
 init:
   - step: load-namespace
     namespace: metabase.driver.bigquery-alt
