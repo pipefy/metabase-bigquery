@@ -79,16 +79,27 @@
                             (.setPageToken <> page-token-or-nil)))))
 
 (defn- ^DatasetList list-datasets
-  ([{{:keys [project-id]} :details, :as database}]
-   {:pre [database (find-project-id project-id (database->credential database))]}
-   (google/execute (u/prog1 (.list (.datasets (database->client database)) (find-project-id project-id (database->credential database)))))))
+  ([database]
+   (list-datasets database nil))
+
+  ([{{:keys [project-id]} :details, :as database}, ^String page-token-or-nil]
+   (list-datasets (database->client database) (find-project-id project-id (database->credential database)) page-token-or-nil))
+
+  ([^Bigquery client, ^String project-id, ^String page-token-or-nil]
+   {:pre [client (seq project-id)]}
+   (google/execute (u/prog1  (.list (.datasets client) project-id)
+                             (.setPageToken <> page-token-or-nil)))))
 
 (defmethod driver/describe-database :bigquery_alt
   [_ database]
   ;; first page through all the 50-table pages until we stop getting "next page tokens"
 
   (let [datasets (loop [datasets [], ^DatasetList dataset-list (list-datasets database)]
-                   (let [datasets (concat datasets (.getDatasets dataset-list))]
+                   (let [datasets (concat datasets (loop [bq_datasets [], ^DatasetList dataset-list (list-datasets database)]
+                                                     (let [bq_datasets (concat bq_datasets (.getDatasets dataset-list))]
+                                                       (if-let [next-page-token (.getNextPageToken dataset-list)]
+                                                         (recur bq_datasets (list-datasets database next-page-token))
+                                                         bq_datasets))))]
                      (for [^DatasetList$Datasets dataset datasets
                            :let [^DatasetReference datasetref (.getDatasetReference dataset)]]
                        (.getDatasetId datasetref))))]
